@@ -1,0 +1,80 @@
+#!/bin/bash -e
+
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -x|--execute)
+      EXECUTE="yes"
+      shift # past argument
+      ;;
+    -v|--verbose)
+      VERBOSE="yes"
+      shift # past argument
+      ;;
+    #-s|--searchpath)
+    #  SEARCHPATH="$2"
+    #  shift # past argument
+    #  shift # past value
+    #  ;;
+    -*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1") # save positional arg
+      shift # past argument
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+
+if [ -z "$2" ] ; then
+    echo "$(basename $0) [-x|--execute] [-v|--verbose] SRC DTS"
+    echo "  -x, copy, otherwise dry-run"
+    echo "  -v, show vault data"
+    exit 2
+fi
+SRC="$1"
+DST="$2"
+
+vault_copy(){
+    echo "$1 -> $2"
+    if [ -n "$VERBOSE" ] ; then
+        vault kv get -format=json -field=data $1
+    fi
+    if [ -n "$EXECUTE" ] ; then
+        vault kv get -format=json -field=data $1 | vault kv put $2 -
+    fi
+}
+
+parse_path() {
+    for P in $(vault kv list -format=json $1 | jq -r '.[]') ; do
+        P="${1}/${P}"
+        P=$(echo $P | sed -r 's#/{2,}#/#g')
+        if [ "${P: -1}" = "/" ] ; then
+            parse_path $P
+        else
+            D=$(echo $P | sed -r "s#^${SRC}##")
+            D=${DST}/${SFX}${D}
+            D=$(echo $D | sed -r 's#/{2,}#/#g')
+            vault_copy $P $D
+        fi
+    done
+}
+
+if [ "${SRC: -1}" = "/" ] ; then
+    SFX=""
+else
+    SFX=$(echo $SRC | awk -F'/' '{print "/"$NF}')
+fi
+
+if [ -z "$(vault kv list -format=json $SRC | jq -r '.[]')" ] ; then
+    D=$(echo $SRC | awk -F'/' '{print $NF}')
+    D=${DST}/${SFX}${D}
+    vault_copy $SRC $D
+else
+    parse_path $SRC
+fi
