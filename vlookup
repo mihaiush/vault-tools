@@ -1,0 +1,70 @@
+#!/bin/bash -e
+
+set -e
+set -o pipefail
+
+JQ="jq -r"
+VAULT_TOKEN_STORE="/tmp/.vault-token"
+
+usage(){
+    echo "$(basename $0) PATH [KEY=value]" >&2
+    echo "Required VAULT envvars:"
+    echo "  VAULT_ADDR"
+    echo "  VAULT_ROLE_ID"
+    echo "  VAULT_SECRET_ID"
+    echo "  VAULT_AUTH_METHOD - vault auth list" 
+    exit 2   
+}
+
+if [ -f "envvars" ] ; then
+    . envvars
+fi
+
+[ -z "${VAULT_ADDR}" ] && usage
+[ -z "${VAULT_ROLE_ID}" ] && usage
+[ -z "${VAULT_SECRET_ID}" ] && usage
+[ -z "${VAULT_AUTH_METHOD}" ] && usage
+
+touch $VAULT_TOKEN_STORE
+VAULT_TOKEN=$(cat $VAULT_TOKEN_STORE)
+
+if [ -n "${VAULT_TOKEN}" ] ; then
+    if [ "$(curl -s -H "X-Vault-Request: true" -H "X-Vault-Token: ${VAULT_TOKEN}" ${VAULT_ADDR}/v1/auth/token/lookup-self | $JQ '.data.display_name')" = "null" ] ; then
+        echo "Bad vault token, drop it" >&2
+        unset VAULT_TOKEN
+    fi
+fi
+
+if [ -z "${VAULT_TOKEN}" ] ; then
+    echo "Authenticate to vault" >&2
+    VAULT_TOKEN=$(curl -s -H "X-Vault-Request: true" -X PUT -d '{"role_id":"'${VAULT_ROLE_ID}'","secret_id":"'${VAULT_SECRET_ID}'"}' ${VAULT_ADDR}/v1/auth/${VAULT_AUTH_METHOD}/login | $JQ '.auth.client_token')
+    VAULT_TOKEN=$(echo $VAULT_TOKEN | grep -v null)
+    echo -n $VAULT_TOKEN >$VAULT_TOKEN_STORE
+    if [ -z "${VAULT_TOKEN}" ] ; then
+        echo "Authentication failed" >&2
+        exit 1
+    fi
+    echo "Write vault token in ${VAULT_TOKEN_STORE}" >&2
+fi
+
+[ -z "${1}" ] && usage
+
+if [ -n "${2}" ] ; then
+    KEY=$2
+else
+    KEY="value"
+fi
+
+# https://github.com/hashicorp/vault/blob/e19ce98a97015e13995fdff3c8ca4ae1e02f515b/command/kv_helpers.go#L58
+PREFLIGHT=$(curl -s -H "X-Vault-Request: true" -H "X-Vault-Token: ${VAULT_TOKEN}" ${VAULT_ADDR}/v1/sys/internal/ui/mounts/${1} | $JQ '.data')
+if [ "$(echo $PREFLIGHT | $JQ '.options.version')" = "2" ] ; then
+    P=$(echo $PREFLIGHT | $JQ '.path')
+    P=$(echo $1 | sed -r "s#^${P}(.+)#${P}data/\1#")
+    KEY=".data.data.\"${KEY}\""
+else
+    P=$1
+    KEY=".data.\"${KEY}\""
+fi
+
+curl -s -H "X-Vault-Request: true" -H "X-Vault-Token: ${VAULT_TOKEN}" ${VAULT_ADDR}/v1/${P} | $JQ $KEY
+

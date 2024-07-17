@@ -12,11 +12,6 @@ while [[ $# -gt 0 ]]; do
       VERBOSE="yes"
       shift # past argument
       ;;
-    #-s|--searchpath)
-    #  SEARCHPATH="$2"
-    #  shift # past argument
-    #  shift # past value
-    #  ;;
     -*)
       echo "Unknown option $1"
       exit 1
