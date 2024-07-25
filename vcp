@@ -68,7 +68,7 @@ fi
 
 if [ -z "$(vault kv list -format=json $SRC | jq -r '.[]')" ] ; then
     D=$(echo $SRC | awk -F'/' '{print $NF}')
-    D=${DST}/${SFX}${D}
+    D=${DST}/${D}
     vault_copy $SRC $D
 else
     parse_path $SRC
